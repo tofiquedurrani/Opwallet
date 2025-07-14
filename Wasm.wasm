@@ -15,32 +15,30 @@ import {
 export class MyToken extends DeployableOP_20 {
     public constructor() {
         super();
-
-        // IMPORTANT. THIS WILL RUN EVERYTIME THE CONTRACT IS INTERACTED WITH. FOR SPECIFIC INITIALIZATION, USE "onDeployment" METHOD.
+        // Constructor runs on every interaction; keep it minimal.
     }
 
-    // "solidityLikeConstructor" This is a solidity-like constructor. This method will only run once when the contract is deployed.
-    public override onDeployment(_calldata: Calldata): void {
-        const maxSupply: u256 = u256.fromString('1000000000000000000000000000'); // Your max supply. (Here, 1 billion tokens)
-        const decimals: u8 = 18; // Your decimals.
-        const name: string = 'tpk'; // Your token name.
-        const symbol: string = 'tpk'; // Your token symbol.
+    public override onDeployment(calldata: Calldata): void {
+        const maxSupply: u256 = u256.fromString('1000000000000000000000000000'); // 1 billion tokens
+        const decimals: u8 = 18;
+        const name: string = 'TPK';
+        const symbol: string = 'TPK';
 
         this.instantiate(new OP20InitParameters(maxSupply, decimals, name, symbol));
 
-        // Add your logic here. Eg, minting the initial supply:
+        // Mint initial supply to the deployer
         this._mint(Blockchain.tx.origin, maxSupply);
     }
 
     @method(
         {
-            name: 'address',
+            name: 'to',
             type: ABIDataTypes.ADDRESS,
         },
         {
             name: 'amount',
             type: ABIDataTypes.UINT256,
-        },
+        }
     )
     @returns({
         name: 'success',
@@ -50,19 +48,16 @@ export class MyToken extends DeployableOP_20 {
     public mint(calldata: Calldata): BytesWriter {
         this.onlyDeployer(Blockchain.tx.sender);
 
-        const response = new BytesWriter(BOOLEAN_BYTE_LENGTH);
-        const resp = this._mint(calldata.readAddress(), calldata.readU256());
+        const to: Address = calldata.readAddress();
+        const amount: u256 = calldata.readU256();
+        const success: bool = this._mint(to, amount);
 
-        response.writeBoolean(resp);
+        const response = new BytesWriter(BOOLEAN_BYTE_LENGTH);
+        response.writeBoolean(success);
 
         return response;
     }
 
-    /**
-     * Mints tokens to the specified addresses.
-     *
-     * @param calldata Calldata containing an `AddressMap<Address, u256>` to mint to.
-     */
     @method({
         name: 'addressAndAmount',
         type: ABIDataTypes.ADDRESS_UINT256_TUPLE,
@@ -81,23 +76,22 @@ export class MyToken extends DeployableOP_20 {
         let totalAirdropped: u256 = u256.Zero;
 
         for (let i: i32 = 0; i < addresses.length; i++) {
-            const address = addresses[i];
-            const amount = addressAndAmount.get(address);
+            const address: Address = addresses[i];
+            const amount: u256 = addressAndAmount.get(address);
 
-            const currentBalance: u256 = this.balanceOfMap.get(address);
+            const currentBalance: u256 | null = this.balanceOfMap.get(address);
+            const newBalance: u256 = currentBalance
+                ? SafeMath.add(currentBalance, amount)
+                : amount;
 
-            if (currentBalance) {
-                this.balanceOfMap.set(address, SafeMath.add(currentBalance, amount));
-            } else {
-                this.balanceOfMap.set(address, amount);
-            }
-
+            this.balanceOfMap.set(address, newBalance);
             totalAirdropped = SafeMath.add(totalAirdropped, amount);
 
             this.createMintEvent(address, amount);
         }
 
-        this._totalSupply.set(SafeMath.add(this._totalSupply.value, totalAirdropped));
+        const newTotalSupply: u256 = SafeMath.add(this._totalSupply.value, totalAirdropped);
+        this._totalSupply.set(newTotalSupply);
 
         const writer: BytesWriter = new BytesWriter(BOOLEAN_BYTE_LENGTH);
         writer.writeBoolean(true);
